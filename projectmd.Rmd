@@ -1,0 +1,135 @@
+---
+title: "Practical Machine Learning Final Project"
+author: "Brandt D. Pence"
+date: "May 6, 2016"
+output: html_document
+---
+
+
+## Background
+
+The data used here are from the Human Activity Recognition project from 
+groupware.les.in.puc-rio.br.  The task was to predict the quality of lift (5 
+levels of correct or incorrect coded as A-E) using accelerometer data.  The 
+details of the data processing, model building, and prediction are outlined 
+below.
+
+
+## Data Processing
+
+Start by loading necessary packages and the training and test sets.  This code
+assumes that the files are located in the working directory.
+```{r message=F, warning=F}
+library(caret)
+library(randomForest)
+train <- read.csv("pml-training.csv")
+test <- read.csv("pml-testing.csv")
+dim(train)
+```
+As can be seen, the training set includes 160 variables.
+
+The first data processing step removes variables with NA values.  There are a 
+number of these. The summary below shows one such example.
+```{r message=F, warning=F}
+summary(train$avg_yaw_arm)
+```
+
+The following code filters the training set (and the test set) for the variables
+with NA values.
+```{r message=F, warning=F}
+nas <- apply(train, 2, is.na) # creates data frame with T/F for NA
+nas2 <- apply(nas, 2, mean) # shows proportion of NAs for each variable
+filt <- nas2[nas2==0] # vector with only variables with no NAs
+train2 <- train[which(names(train) %in% names(filt))] # new training set with no NAs
+test2 <- test[which(names(test) %in% names(filt))] # subset the test set too
+dim(train2)
+```
+The first processing step has removed 67 variables, leaving a total of 93.
+
+The next processing step removes variables with a large number of values of
+*#DIV/0!*.  These are likely to be calculated variables from Excel and thus
+able to be excluded without losing much in the way of predictive power. The
+following code filters the new training and test sets for variables with
+*#DIV/0!* values.
+```{r message=F, warning=F}
+divs <- apply(train2, 2, function(x) x=="#DIV/0!") # creates df with T/F for #DIV/0!
+divs2 <- apply(divs, 2, mean) # shows proportion of #DIV/0!s for each variable
+filt2 <- divs2[divs2==0] # vector with only variables with no DIV/0!s
+train3 <- train2[which(names(train2) %in% names(filt2))] # new training set with no #DIV/0!
+test3 <- test2[which(names(test2) %in% names(filt2))] # subset the test set too
+dim(train3)
+```
+The second processing step removes an additional 33 variables.
+
+The final processing step removes variables unlikely to provide any movement-
+specific information (those containing timestamp, user, and window in their
+names).  I also chose to remove variables ending in _x, _y, and _z, as these
+are likely to be coordinate variables related to other variables in the dataset.
+```{r message=F, warning=F}
+# remove timestamp, user, window, and x/y/z variables
+filt3 <- names(train3[grep("timestamp|user|window|_x|_y|_z", names(train3))])
+train4 <- train3[,!colnames(train3) %in% filt3]
+test4 <- test3[,!colnames(test3) %in% filt3]
+test4$classe <- rep(NA, 20) # added a column for the classe variable
+rm(train,train2,train3,nas,nas2,divs,divs2,filt,filt2,filt3) # clean up environment
+rm(test,test2,test3) # clean up environment
+dim(train4)
+```
+After the final step, the training set contains 18 predictor variables.
+
+The objective of the assignment is to predict the classe values in the test set,
+thus these are not given. Therefore, it is necessary to split the training set
+into a new training set and a validation (testing) set.  Due to the accuracy of
+the random forest model generated below, this is the extent of the cross-validation
+I performed for this project.  I chose a 70%/30% split as appropriate for this
+dataset given the large number of observations.
+```{r message=F, warning=F}
+set.seed(452)
+inTrain <- createDataPartition(train4$X, p=0.7)[[1]] # split for training and validation sets
+training <- train4[inTrain,] # final training set
+validation <- train4[-inTrain,] # validation set
+```
+
+
+## Model Building
+
+I trained a random forest model on the data, leaving out the variable X (the ID
+variable). Thus, I used a total of 16 predictor variables to predict classe in
+the validation set.
+```{r message=F, warning=F}
+set.seed(1021)
+forest <- randomForest(classe~.-X, data=training, ntree=500) # RF model
+predF <- predict(forest, newdata=validation) # predictions on validation set
+confusionMatrix(predF, validation$classe) # confusion matrix
+```
+The confusion matrix shows an accuracy of 0.9903, and thus an **out-of-sample**
+error rate of 1-0.9903, or 0.0097.
+
+I also trained a boosting model using the same variables.
+The second model was less accurate than the random forest model (0.9344). 
+Although I did try an ensemble model using the results of both models together
+(code not shown), this gave the same accuracy as the random forest alone, thus I 
+used only the random forest model for my final prediction. I also checked to see 
+if the random forest and boosting models gave the same predictions on the test 
+set, which turned out to be the case.  I have omitted the code for these steps 
+for brevity's sake.
+
+
+## Prediction
+
+Finally, I generated probabilities for each outcome (A,B,C,D,E) for each observation
+in the testing set using the random forest model.  I generated a data frame
+showing the predictions for the classe variable in the testing set and the
+probabilities associated with each prediction.
+```{r message=F, warning=F}
+predT <- predict(forest, newdata=test4) # test set predictions from RF model
+predP <- predict(forest, type="prob", newdata=test4) # probabilities for test set predictions
+preds <- data.frame(cbind(as.vector(predT), predP), stringsAsFactors=F)
+preds[,-1] <- apply(preds[,-1], 2, as.numeric) # final data frame with predictions and probs
+preds
+```
+The model successfully predicted 20/20 test cases.
+
+```{r}
+sessionInfo()
+```
